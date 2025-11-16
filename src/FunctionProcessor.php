@@ -172,27 +172,59 @@ class FunctionProcessor
             return [];
         }
 
-        // Parse remaining parameters
+        // Parse remaining parameters respecting quoted strings
         $params = [];
-        $parts = explode(' ', $expression);
+        $length = strlen($expression);
+        $i = 0;
+        $current = '';
+        $inQuotes = false;
+        $quoteChar = null;
 
-        foreach ($parts as $part) {
-            $part = trim($part);
-            if (empty($part)) {
+        while ($i < $length) {
+            $char = $expression[$i];
+
+            if (($char === '"' || $char === "'") && ($i === 0 || $expression[$i - 1] !== '\\')) {
+                if (!$inQuotes) {
+                    $inQuotes = true;
+                    $quoteChar = $char;
+                } elseif ($char === $quoteChar) {
+                    $inQuotes = false;
+                    $quoteChar = null;
+                    // Add the quoted string without quotes
+                    if (!empty($current)) {
+                        $params[] = $current;
+                        $current = '';
+                    }
+                    $i++;
+                    continue;
+                }
+                $i++;
                 continue;
             }
 
-            // Quoted string
-            if (preg_match('/^["\'](.+)["\']$/', $part, $matches)) {
-                $params[] = $matches[1];
+            if ($char === ' ' && !$inQuotes) {
+                if (!empty($current)) {
+                    // Check if it's a number
+                    if (is_numeric($current)) {
+                        $params[] = str_contains($current, '.') ? (float)$current : (int)$current;
+                    } else {
+                        $params[] = $current;
+                    }
+                    $current = '';
+                }
+            } else {
+                $current .= $char;
             }
-            // Number
-            elseif (is_numeric($part)) {
-                $params[] = str_contains($part, '.') ? (float)$part : (int)$part;
-            }
-            // Literal
-            else {
-                $params[] = $part;
+
+            $i++;
+        }
+
+        // Add last parameter
+        if (!empty($current)) {
+            if (is_numeric($current)) {
+                $params[] = str_contains($current, '.') ? (float)$current : (int)$current;
+            } else {
+                $params[] = $current;
             }
         }
 
@@ -201,6 +233,7 @@ class FunctionProcessor
 
     /**
      * Get value from context using dot notation
+     * Supports both arrays and objects with getters/properties
      *
      * @param string $path Dot-notation path to value
      * @param array $context Data context
@@ -214,12 +247,53 @@ class FunctionProcessor
         foreach ($parts as $part) {
             if (is_array($value) && array_key_exists($part, $value)) {
                 $value = $value[$part];
+            } elseif (is_object($value)) {
+                $value = $this->getObjectProperty($value, $part);
+                if ($value === null) {
+                    return null;
+                }
             } else {
                 return null;
             }
         }
 
         return $value;
+    }
+
+    /**
+     * Get property value from an object
+     * Tries getter methods first, then public properties
+     *
+     * @param object $object Object to get property from
+     * @param string $property Property name
+     * @return mixed Property value or null if not found
+     */
+    private function getObjectProperty(object $object, string $property): mixed
+    {
+        // Try getter method: getName() for property 'name'
+        $getter = 'get' . ucfirst($property);
+        if (method_exists($object, $getter)) {
+            return $object->$getter();
+        }
+
+        // Try is method: isActive() for property 'active'
+        $isMethod = 'is' . ucfirst($property);
+        if (method_exists($object, $isMethod)) {
+            return $object->$isMethod();
+        }
+
+        // Try has method: hasPermission() for property 'permission'
+        $hasMethod = 'has' . ucfirst($property);
+        if (method_exists($object, $hasMethod)) {
+            return $object->$hasMethod();
+        }
+
+        // Try direct property access
+        if (property_exists($object, $property)) {
+            return $object->$property;
+        }
+
+        return null;
     }
 
     /**

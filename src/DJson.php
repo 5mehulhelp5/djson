@@ -403,6 +403,7 @@ class DJson
 
     /**
      * Get a value from context using dot notation
+     * Supports both arrays and objects with getters/properties
      *
      * @param string $path Dot-notation path to value
      * @param array $context Data context
@@ -416,12 +417,53 @@ class DJson
         foreach ($parts as $part) {
             if (is_array($value) && array_key_exists($part, $value)) {
                 $value = $value[$part];
+            } elseif (is_object($value)) {
+                $value = $this->getObjectProperty($value, $part);
+                if ($value === null) {
+                    return null;
+                }
             } else {
                 return null;
             }
         }
 
         return $value;
+    }
+
+    /**
+     * Get property value from an object
+     * Tries getter methods first, then public properties
+     *
+     * @param object $object Object to get property from
+     * @param string $property Property name
+     * @return mixed Property value or null if not found
+     */
+    private function getObjectProperty(object $object, string $property): mixed
+    {
+        // Try getter method: getName() for property 'name'
+        $getter = 'get' . ucfirst($property);
+        if (method_exists($object, $getter)) {
+            return $object->$getter();
+        }
+
+        // Try is method: isActive() for property 'active'
+        $isMethod = 'is' . ucfirst($property);
+        if (method_exists($object, $isMethod)) {
+            return $object->$isMethod();
+        }
+
+        // Try has method: hasPermission() for property 'permission'
+        $hasMethod = 'has' . ucfirst($property);
+        if (method_exists($object, $hasMethod)) {
+            return $object->$hasMethod();
+        }
+
+        // Try direct property access
+        if (property_exists($object, $property)) {
+            return $object->$property;
+        }
+
+        return null;
     }
 
     /**
